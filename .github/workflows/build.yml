@@ -1,0 +1,90 @@
+name: Build ClassIn Replay Downloader
+
+# 触发条件：推送到 main、对 main 的 PR、以及手动触发
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+# 最小权限原则
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (Windows / MSVC v143 / x64 Release)
+    runs-on: windows-latest      # 预装 VS2022 (v143) + Windows 10 SDK + 7-Zip
+    steps:
+      - name: Checkout 源码
+        uses: actions/checkout@v4
+
+      - name: 配置 MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      # libffmpeg.7z 已在仓库内，会被一起 checkout。
+      # 工程通过相对路径 lib/ 引用 ffmpeg 的 .lib（链接期需要），
+      # 因此必须在编译【之前】解压到 ClassIn_Replay_Download/ 目录。
+      - name: 解压 libffmpeg.7z（编译前必须）
+        shell: pwsh
+        run: |
+          $sevenZip = "C:\Program Files\7-Zip\7z.exe"
+          if (-not (Test-Path $sevenZip)) { $sevenZip = "7z" }   # 兜底 PATH 中的 7z
+          & $sevenZip x "ClassIn_Replay_Download\libffmpeg.7z" -o"ClassIn_Replay_Download" -y
+
+          # 防御：若 7z 自带顶层 libffmpeg/ 目录，则把其内容上移，
+          # 保证 lib/ 直接位于 ClassIn_Replay_Download/ 下（工程按相对路径 lib/ 引用）
+          if (-not (Test-Path "ClassIn_Replay_Download\lib")) {
+            $nested = Get-ChildItem "ClassIn_Replay_Download" -Directory |
+                      Where-Object { $_.Name -eq 'libffmpeg' } | Select-Object -First 1
+            if ($nested) {
+              Get-ChildItem $nested.FullName | Move-Item -Destination "ClassIn_Replay_Download" -Force
+              Remove-Item $nested.FullName -Recurse -Force
+            }
+          }
+
+          Write-Host "---- 解压结果（诊断用）----"
+          Get-ChildItem -Path "ClassIn_Replay_Download" -Recurse -Include *.lib,*.dll |
+            Select-Object FullName | Format-Table -AutoSize
+
+      - name: 编译解决方案（Release|x64）
+        shell: pwsh
+        run: |
+          msbuild ClassIn_Replay_Download.sln `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /p:PlatformToolset=v143 `
+            /m /v:minimal
+
+      # 定位产物 exe，并把 ffmpeg 运行时 DLL（及 ffmpeg 自带 exe）复制到 exe 同目录，
+      # 使上传的压缩包可直接运行。资源(html/css/js)已编译进 exe，无需单独携带。
+      - name: 定位产物并打包 ffmpeg 运行时
+        id: bundle
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Path . -Recurse -Filter "ClassIn_Replay_Download.exe" |
+                 Select-Object -First 1
+          if (-not $exe) { throw "未找到编译产物 ClassIn_Replay_Download.exe，构建可能失败" }
+          $outDir = $exe.DirectoryName
+          Write-Host "可执行文件: $($exe.FullName)"
+
+          Get-ChildItem -Path "ClassIn_Replay_Download" -Recurse -Include *.dll,*.exe |
+            ForEach-Object {
+              if ($_.FullName -ne $exe.FullName) {
+                Copy-Item $_.FullName -Destination $outDir -Force
+              }
+            }
+
+          Write-Host "---- 最终发布目录内容 ----"
+          Get-ChildItem -Path $outDir | Format-Table Name, Length -AutoSize
+
+          # 输出为带正斜杠的路径，供 upload-artifact 使用
+          echo "out_dir=$($outDir -replace '\\','/')" >> $env:GITHUB_OUTPUT
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClassIn-Replay-Download-x64-Release
+          path: ${{ steps.bundle.outputs.out_dir }}
+          if-no-files-found: error
