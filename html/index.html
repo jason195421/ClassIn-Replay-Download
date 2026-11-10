@@ -1,45 +1,161 @@
 <!DOCTYPE html>
-<html>
-
+<html lang="zh-CN" data-theme="light">
 <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="initial-scale=1.0,user-scalable=no">
-    <title>ClassIn Replay Download 1.0.0</title>
-    <link href="css/style.min.css" rel="stylesheet">
-    <link href="css/video-js.min.css" rel="stylesheet">
-    <script src="js/video.min.js"></script>
-    <script src="js/videojs-http-streaming.min.js"></script>
-    <script src="js/script.min.js" defer></script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ClassIn Replay Download · 回放下载器</title>
+<link href="css/video-js.min.css" rel="stylesheet">
+<link href="css/style.min.css" rel="stylesheet">
+<script src="js/video.min.js"></script>
+<script src="js/videojs-http-streaming.min.js"></script>
+<script src="js/script.min.js" defer></script>
 </head>
-
 <body>
-    <div class="header">
-        <div class="info-header">Download ClassIn Replays | <a href="https://github.com/CarlGao4/ClassIn-Replay-Download" target="_blank">项目主页</a> | <a href="https://www.bilibili.com/read/cv22153816" target="_blank">使用说明</a></div>
-        <div class="header-btn-box">
-            <button class="btn-header" onclick="RequireScan()">Scan replays</button>
-            <button class="btn-header" onclick="ClearVideos();GetVideos(false)">Refresh</button>
-            <button class="btn-header" onclick="OpenDownList()">Download list<div class="notify-num">2</div></button>
-            <button class="btn-header" onclick="Download_Select()">Download selected</button>
-            <button class="btn-header" onclick="fetch('/stop').then(null,()=>{location.href='about:blank'})">Exit</button>
-        </div>
-    </div>
-    <div class="downlist-cover" style="display:none;opacity:0">
-        <div class="downlist-window" style="top:calc(15% + 2rem)">
-            <div class="window-titlebar">
-                <div class="window-title">Download List</div>
-                <div class="close-btn" onclick="CloseDownList()">×</div>
-            </div>
-            <div class="window-box" id="down-list"></div>
-        </div>
-    </div>
-    <div class="content">
-        <div class="item conf-panel">
-            <div class="down-path"></div>
-            <input id="path">
-            <input class="check-big" type="checkbox" onchange="SwitchAutoScan()"> Enable auto scan every <input class="delay-int" type="number" min="1" max="90" step="0.5" onchange="if(this.value>90){this.value=90}if(this.value<1){this.value=1}ChangeDelayTime()"
-                onfocus="modify_focus=true;StartModify()" onblur="modify_focus=false;StopModify()" onkeypress="StartModify();ChangeDelayTime()" onmousemove="if(modify_focus){StartModify()}"> seconds
-        </div>
-    </div>
-</body>
+<div class="app">
 
+  <!-- ============ 顶栏 ============ -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">&#9654;</div>
+      <div class="brand-text">
+        <h1>ClassIn Replay Download</h1>
+        <span>REPLAY MANAGER &nbsp;·&nbsp; v1.0.0</span>
+      </div>
+    </div>
+    <nav class="top-links">
+      <a href="https://github.com/CarlGao4/ClassIn-Replay-Download" target="_blank" rel="noopener">项目主页</a>
+      <a href="https://www.bilibili.com/read/cv22153816" target="_blank" rel="noopener">使用说明</a>
+    </nav>
+    <div class="top-actions">
+      <button class="btn primary" onclick="RequireScan()" title="立即扫描 ClassIn 进程中的回放地址"><span class="ico">&#128269;</span>扫描回放</button>
+      <button class="btn" onclick="RefreshVideos()" title="清空并重新拉取列表"><span class="ico">&#8635;</span>刷新</button>
+      <button class="btn" onclick="OpenDownList()" title="查看下载队列"><span class="ico">&#8681;</span>下载列表<span class="badge zero" id="dl-badge">0</span></button>
+      <button class="btn accent" onclick="DownloadSelected()" title="下载所有勾选的视频"><span class="ico">&#11015;</span>下载选中</button>
+      <button class="btn ghost" id="theme-btn" onclick="ToggleTheme()" title="切换深色 / 浅色">&#9789;</button>
+      <button class="btn danger" onclick="ExitApp()" title="退出程序">&#10005; 退出</button>
+    </div>
+  </header>
+
+  <!-- ============ 统计卡片 ============ -->
+  <section class="stats">
+    <div class="stat"><div class="stat-num" id="st-total">0</div><div class="stat-label">全部回放</div></div>
+    <div class="stat s-dup"><div class="stat-num" id="st-dup">0</div><div class="stat-label">重复分组</div></div>
+    <div class="stat s-run"><div class="stat-num" id="st-running">0</div><div class="stat-label">下载中</div></div>
+    <div class="stat s-done"><div class="stat-num" id="st-done">0</div><div class="stat-label">已完成</div></div>
+    <div class="stat s-fail"><div class="stat-num" id="st-failed">0</div><div class="stat-label">失败</div></div>
+    <div class="stat s-sel"><div class="stat-num" id="st-selected">0</div><div class="stat-label">已勾选</div></div>
+  </section>
+
+  <!-- ============ 配置 ============ -->
+  <section class="card config">
+    <div class="config-item grow">
+      <label for="path">下载保存路径</label>
+      <input type="text" id="path" placeholder="例如 D:\ClassIn\Replays" autocomplete="off">
+    </div>
+    <label class="switch" title="定时自动扫描新回放">
+      <input type="checkbox" id="autoscan" onchange="SwitchAutoScan()">
+      <span class="track"></span>自动扫描
+    </label>
+    <div class="config-item">
+      <label for="delay">扫描间隔（秒）</label>
+      <input type="number" id="delay" min="1" max="90" step="0.5" value="5"
+             onchange="if(this.value>90)this.value=90;if(this.value<1||this.value==='')this.value=1;ChangeDelayTime()">
+    </div>
+    <div class="config-hint">提示：勾选「自动扫描」后，程序会按设定间隔自动发现 ClassIn 窗口里的回放地址；修改路径仅影响之后的下载任务。</div>
+  </section>
+
+  <!-- ============ 工具栏 ============ -->
+  <section class="card toolbar">
+    <div class="toolbar-row">
+      <div class="search-wrap">
+        <span class="s-ico">&#128269;</span>
+        <input type="text" id="search" placeholder="搜索标题或地址…" oninput="ApplyFilters()" autocomplete="off">
+        <button class="s-clear" onclick="ClearSearch()" title="清空">&times;</button>
+      </div>
+      <select id="sort" onchange="ApplyFilters()" title="排序方式">
+        <option value="default">默认顺序</option>
+        <option value="title">按标题 A→Z</option>
+        <option value="titles">按候选数 ↓</option>
+        <option value="dup">重复优先</option>
+      </select>
+      <select id="filter" onchange="ApplyFilters()" title="筛选">
+        <option value="all">全部视频</option>
+        <option value="dup">仅重复</option>
+        <option value="unique">仅唯一</option>
+        <option value="downloaded">已下载过</option>
+        <option value="undownloaded">未下载</option>
+        <option value="selected">已勾选</option>
+      </select>
+      <div class="toggle-group">
+        <label class="chip-toggle" title="把疑似重复的视频聚在一起显示">
+          <input type="checkbox" id="groupDup" checked onchange="ApplyFilters()">&#128206; 重复分组
+        </label>
+        <label class="chip-toggle" title="每组只保留一个代表，其余折叠">
+          <input type="checkbox" id="hideDup" onchange="ApplyFilters()">&#128065; 隐藏重复项
+        </label>
+      </div>
+    </div>
+    <div class="toolbar-row second">
+      <div class="sel-actions">
+        <button class="mini-btn" onclick="SelectAll()">全选</button>
+        <button class="mini-btn" onclick="SelectNone()">取消全选</button>
+        <button class="mini-btn" onclick="SelectInvert()">反选</button>
+        <button class="mini-btn" onclick="SelectUniqueOnly()" title="每组重复只保留一个，方便批量下载不重复">仅选代表</button>
+        <span class="bulk-label" id="sel-info">已选 0 项</span>
+      </div>
+      <div class="bulk">
+        <button class="mini-btn" onclick="DownloadSelected()">&#11015; 下载选中</button>
+        <button class="mini-btn" onclick="CopySelectedUrls()" title="复制所有勾选视频的地址">&#128203; 复制地址</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 重复提示条 ============ -->
+  <div class="group-banner" id="dupBanner">
+    <span>&#9888;</span>
+    <span id="dupBannerText">检测到重复视频</span>
+    <button onclick="FocusFirstDup()">查看重复分组 &rarr;</button>
+  </div>
+
+  <!-- ============ 视频网格 ============ -->
+  <main class="grid" id="content"></main>
+  <div class="empty" id="empty" hidden>
+    <div class="empty-icon">&#127910;</div>
+    <p>还没有发现回放视频</p>
+    <span>打开 ClassIn 并播放一段回放，然后点击「扫描回放」开始</span>
+  </div>
+
+</div>
+
+<!-- ============ 下载列表弹窗 ============ -->
+<div class="modal-cover" id="downlist-cover" hidden onclick="if(event.target===this)CloseDownList()">
+  <div class="modal">
+    <div class="modal-head">
+      <h2>&#8681; 下载列表</h2>
+      <div class="modal-tools">
+        <select id="dlFilter" onchange="RenderDownloads()">
+          <option value="all">全部</option>
+          <option value="active">进行中</option>
+          <option value="4">已完成</option>
+          <option value="2">失败 / 取消</option>
+        </select>
+        <button class="mini-btn" onclick="ClearFinishedDownloads()">清除已完成</button>
+        <button class="close" onclick="CloseDownList()" title="关闭">&times;</button>
+      </div>
+    </div>
+    <div class="modal-body" id="down-list">
+      <div class="dl-empty" id="dl-empty">暂无下载任务</div>
+    </div>
+    <div class="modal-foot">
+      <div class="overall">
+        <span style="font-size:12px;color:var(--muted);white-space:nowrap">总进度</span>
+        <div class="overall-bar"><i id="overall-bar"></i></div>
+        <span id="overall-text">0%</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast-wrap" id="toast-wrap"></div>
+</body>
 </html>
