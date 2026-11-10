@@ -111,7 +111,11 @@ function RecomputeDup() {
     function mergeBuckets(buckets) {
         Object.keys(buckets).forEach(function (k) {
             var g = buckets[k];
-            if (g.length < 2 || g.length > n * 0.6) return;
+            // A bucket is "degenerate" only when the fingerprint has no
+            // discriminating power at all (nearly every video shares it).
+            // Do NOT use a pure ratio here: with only 2 videos a shared
+            // fingerprint is exactly the duplicate case we must catch.
+            if (g.length < 2 || (n >= 8 && g.length >= n * 0.8)) return;
             for (var j = 1; j < g.length; j++) union(g[0], g[j]);
         });
     }
@@ -134,15 +138,19 @@ function RecomputeDup() {
     Object.keys(dupGroups).forEach(function (r) {
         var ids = dupGroups[r];
         if (ids.length < 2) return;
-        var fu = Object.create(null), ft = Object.create(null), nu = 0, nt = 0;
+        var fu = Object.create(null), ft = Object.create(null), raw = Object.create(null);
+        var nu = 0, nt = 0;
         ids.forEach(function (id) {
             var v = byId[id]; if (!v) return;
             if (v.fpUrl) { fu[v.fpUrl] = 1; nu++; }
             if (v.fpTitle) { ft[v.fpTitle] = 1; nt++; }
+            raw[v.url] = 1;
         });
+        var sameRaw = Object.keys(raw).length === 1;
         var sameU = nu === ids.length && Object.keys(fu).length === 1;
         var sameT = nt === ids.length && Object.keys(ft).length === 1;
-        reasonByRoot[r] = (sameU && sameT) ? '地址与标题均相同' :
+        reasonByRoot[r] = (sameRaw && sameT) ? '地址与标题完全相同' :
+            (sameU && sameT) ? '同一视频（地址仅签名或时间戳不同，标题相同）' :
             sameU ? '地址相同（可能仅签名或时间戳不同）' :
             sameT ? '窗口标题相同' : '地址或标题相似';
     });
@@ -587,6 +595,11 @@ function GetVideos(myGen) {
 }
 function RefreshVideos() {
     gen++;
+    videos.forEach(function (v) {
+        if (v.playerInst && typeof v.playerInst.dispose === 'function') {
+            try { v.playerInst.dispose(); } catch (e) {}
+        }
+    });
     videos = []; byUrl = Object.create(null); byId = Object.create(null);
     dupGroups = Object.create(null); seq = 0; lastVisible = [];
     $('content').innerHTML = '';

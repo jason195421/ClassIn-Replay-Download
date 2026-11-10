@@ -35,7 +35,7 @@ button{cursor:pointer}
 /* ---------- top bar ---------- */
 .topbar{position:sticky;top:0;z-index:40;display:flex;align-items:center;gap:18px;flex-wrap:wrap;
   padding:12px 4px;margin-bottom:18px;
-  background:color-mix(in srgb,var(--surface) 82%,transparent);
+  background:var(--surface);background:color-mix(in srgb,var(--surface) 82%,transparent);
   backdrop-filter:saturate(180%) blur(14px);-webkit-backdrop-filter:saturate(180%) blur(14px);
   border-bottom:1px solid var(--border)}
 .brand{display:flex;align-items:center;gap:12px;min-width:210px}
@@ -138,7 +138,7 @@ select{cursor:pointer;padding-right:26px;appearance:none;
 .vcard[hidden]{display:none}
 .preview{position:relative;width:100%;padding-top:56.25%;background:linear-gradient(135deg,#1b2340,#2b3a63);overflow:hidden}
 [data-theme="dark"] .preview{background:linear-gradient(135deg,#0b1120,#1b2742)}
-.preview>*{position:absolute!important;inset:0;width:100%!important;height:100%!important;top:0;left:0}
+.preview>video-js,.preview>video,.preview>.poster{position:absolute!important;top:0;left:0;width:100%!important;height:100%!important}
 .preview .poster{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;color:#c9d3ee;cursor:pointer;
   background:radial-gradient(500px 200px at 50% 120%,#4f46e544,transparent 70%);font-size:12px;letter-spacing:.5px}
 .preview .play{width:56px;height:56px;border-radius:50%;display:grid;place-items:center;font-size:21px;color:#fff;
