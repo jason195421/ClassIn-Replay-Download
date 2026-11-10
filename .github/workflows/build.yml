@@ -82,6 +82,45 @@ jobs:
           # 输出为带正斜杠的路径，供 upload-artifact 使用
           echo "out_dir=$($outDir -replace '\\','/')" >> $env:GITHUB_OUTPUT
 
+      # 冒烟测试：msbuild 报 success 不代表 exe 真的能启动。
+      # 历史故障：源码里全局 std::regex 含非法字符类区间，在新版 MSVC STL 上
+      # 于 main 之前抛 std::regex_error，进程以 0xC0000409 (__fastfail) 退出，
+      # 但编译和上传都"成功"。--help 只走 CLI11 参数解析后立刻返回，
+      # 不提权、不开端口、不启动扫描线程，适合作为启动门禁。
+      - name: 启动冒烟测试（防止"构建成功但产物崩溃"）
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Path . -Recurse -Filter "ClassIn_Replay_Download.exe" |
+                 Select-Object -First 1
+          if (-not $exe) { throw "smoke failed: executable not found" }
+
+          $stdoutFile = Join-Path $env:RUNNER_TEMP "smoke.stdout.txt"
+          $stderrFile = Join-Path $env:RUNNER_TEMP "smoke.stderr.txt"
+          $proc = Start-Process -FilePath $exe.FullName -ArgumentList "--help" `
+                    -Wait -PassThru -NoNewWindow `
+                    -RedirectStandardOutput $stdoutFile `
+                    -RedirectStandardError $stderrFile
+          $code = $proc.ExitCode
+          $out  = Get-Content $stdoutFile -Raw -ErrorAction SilentlyContinue
+          $err  = Get-Content $stderrFile -Raw -ErrorAction SilentlyContinue
+
+          Write-Host ("ExitCode = {0} (0x{1:X8})" -f $code, $code)
+          Write-Host "---- stdout ----"
+          Write-Host $out
+          Write-Host "---- stderr ----"
+          Write-Host $err
+
+          if ($code -ne 0) {
+            throw ("smoke failed: exe exit code {0} (0x{1:X8}), crashed during startup" -f $code, $code)
+          }
+          if ($out -notmatch 'ClassIn Replay Video Downloader' -or $out -notmatch 'Usage:') {
+            throw "smoke failed: --help did not print expected CLI usage"
+          }
+          if ($err -notmatch 'ClassIn Replay Download 1[.]0[.]0') {
+            throw "smoke failed: startup banner missing, likely died before main"
+          }
+          Write-Host "smoke passed: exe starts and responds to --help"
+
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:

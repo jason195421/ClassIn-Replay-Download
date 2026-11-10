@@ -59,11 +59,12 @@ struct DownloadStatus {
 vector<uint8_t> prefix_bin;
 bool short_char = false, Running = true, require_scan = false, auto_scan = true;
 uint64_t wait_int = 5000, next_scan = 0;
-// 注意：字符类里的 '-' 必须放在末尾（或写成 \-）。
-// 若写成 [\w- ...]，新版 MSVC STL 会把 "\w- " 当作区间解析并抛出
-// std::regex_error；此对象是全局静态变量，异常发生在 main 之前且无人捕获，
-// 最终 terminate -> abort -> __fastfail -> 0xC0000409（连 banner 都来不及打印）。
-// 上面 [\w-] 的 '-' 已在末尾，是合法的。
+// The path character class must NOT be written as [\w- ./?%&=]:
+// with '-' between "\w" and the space, newer MSVC STL parses "\w- " as a
+// range and throws std::regex_error. This is a global static object, so the
+// exception fires before main() with no handler -> terminate -> abort ->
+// __fastfail -> 0xC0000409 (not even the startup banner gets printed).
+// Fix: move '-' to the END of the class ([\w ./?%&=-]) so it is a literal.
 regex is_url("http(s)?://([\\w-]+\\.)+[\\w-]+(/[\\w ./?%&=-]*)?");
 set<DWORD> ClassInPids;
 mutex lock_url;
