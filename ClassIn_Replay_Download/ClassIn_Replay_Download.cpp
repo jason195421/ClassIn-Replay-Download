@@ -862,7 +862,7 @@ int main(int argc, char** argv)
     app.add_flag("--no-browser", no_browser, "Do not automatically open a browser");
     app.add_option("--threads", segment_options.threads, "Parallel segment connections per video (default 8)");
     app.add_option("--tries", segment_options.tries, "Network retries per segment (default 5)");
-    app.add_option("--split", segment_options.range_splits, "Range splits for a single file (default 4)");
+    app.add_option("--split", segment_options.range_splits, "Range splits for a single file (0 = disabled, default 0; HLS playlists are still fetched in parallel)");
     app.add_option("--min-split-size", segment_options.range_min_split_size, "Min file size in bytes for Range splitting (default 4194304)");
     CLI11_PARSE(app, argc, argv);
 

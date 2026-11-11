@@ -38,7 +38,13 @@ struct SegmentOptions {
     int connect_timeout_ms = 15000;
     int receive_timeout_ms = 30000;
     int64_t range_min_split_size = 4 * 1024 * 1024; // aria2 --min-split-size
-    int range_splits = 4;         // aria2 --split / --max-connection-per-server
+    // Single-file HTTP Range concurrency is OFF by default. For a plain .mp4
+    // served by a CDN, ffmpeg streaming the URL directly is faster: parallel
+    // Range parts must first be downloaded, then concatenated, then remuxed,
+    // which means several full passes over the data and no output until the
+    // very end. HLS playlists (many small .ts parts) still benefit from the
+    // parallel fetch. Set > 1 (--split N) to opt in.
+    int range_splits = 0;         // aria2 --split / --max-connection-per-server
     std::string user_agent = "ClassIn-Replay-Download/1.0";
     std::string referer;
     std::string cookie;

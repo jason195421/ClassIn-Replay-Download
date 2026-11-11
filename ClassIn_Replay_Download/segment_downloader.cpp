@@ -1085,6 +1085,30 @@ SegmentResult DownloadSegmentsImpl(const std::string& url,
         return result;
     }
 
+    // Fast path. When single-file Range concurrency is disabled (the default),
+    // a URL with an explicit media-file extension is left completely alone:
+    // do not even open a probe connection. That keeps .mp4/.mkv/... downloads
+    // byte-for-byte identical to the original single-threaded remux() path,
+    // with no extra GET, no temp directory and no merge pass. HLS playlists
+    // (.m3u8, or extensionless URLs) still fall through to content sniffing.
+    if (options.range_splits <= 1) {
+        std::string p = u.path_query;
+        size_t q = p.find('?');
+        if (q != std::string::npos) p.resize(q);
+        size_t dot = p.rfind('.');
+        std::string ext = (dot == std::string::npos) ? std::string() : Lower(p.substr(dot));
+        bool plain_file = (ext == ".mp4" || ext == ".mkv" || ext == ".mov" ||
+                           ext == ".flv" || ext == ".avi" || ext == ".wmv" ||
+                           ext == ".webm" || ext == ".m4v" || ext == ".mpg" ||
+                           ext == ".mpeg" || ext == ".3gp" || ext == ".rmvb" ||
+                           ext == ".mts" || ext == ".m2ts");
+        if (plain_file) {
+            result.error = "single-file URL; parallel Range disabled (--split N to enable)";
+            on_log("segment: " + result.error + "; falling back to single-thread remux");
+            return result;
+        }
+    }
+
     HttpSession probe;
     if (!probe.Valid()) {
         result.error = "WinHttpOpen failed";
@@ -1256,7 +1280,7 @@ SegmentResult DownloadSegmentsImpl(const std::string& url,
         return result;
     }
     if (total < options.range_min_split_size || options.range_splits <= 1 || options.threads <= 1) {
-        result.error = "file too small or parallel Range disabled";
+        result.error = "parallel Range download disabled (use --split N to enable)";
         on_log("segment: " + result.error + "; falling back to single-thread remux");
         return result;
     }
