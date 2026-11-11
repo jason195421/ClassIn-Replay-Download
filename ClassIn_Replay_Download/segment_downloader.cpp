@@ -1,3 +1,9 @@
+// Windows.h defines min/max macros by default, which collide with
+// std::min / std::max used throughout this translation unit.
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
 #include "segment_downloader.h"
 
 // WinHTTP supplies HTTPS through SChannel. This is essential here: the
