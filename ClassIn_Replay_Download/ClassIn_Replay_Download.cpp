@@ -3,6 +3,7 @@
 #include "httplib.h"
 #include "CLI11.hpp"
 #include "json.hpp"
+#include "segment_downloader.h"
 
 #include <string>
 #include <vector>
@@ -54,6 +55,9 @@ struct DownloadStatus {
 #define DOWNLOAD_SUCCEEDED 4
 #define DOWNLOAD_WAITING 5
     string err_msg;
+    double segment_progress = -1.0; // parallel pre-fetch progress [0,1]; -1 = inactive
+    int segment_parts = 0;
+    int segment_threads = 0;
 };
 
 vector<uint8_t> prefix_bin;
@@ -77,6 +81,7 @@ counting_semaphore<3> download_lock{ 3 };
 vector<DownloadStatus> Downloads;
 down_t_param new_down_args;
 binary_semaphore start_down_thread_lock(1);
+SegmentOptions segment_options;
 
 mutex lock_scan; // Just in case
 
@@ -735,7 +740,85 @@ DWORD WINAPI RemuxStarter(LPVOID lParam)
                 << Downloads[param.index].path << "\" with file name \"" << Downloads[param.index].fallback_filename
                 << "\"\n";
             lock_down_status.unlock();
-            remux(param);
+            // Parallel segment pre-fetch (modelled on Motrix-i's
+            // SegmentDownloader): grab every HLS part / Range chunk into a
+            // private temp dir, concatenate them in order, then feed that one
+            // local file to the original ffmpeg remux(). On any problem the
+            // module returns used_parallel=false and we transparently fall
+            // back to the single-threaded remux() on the original URL, so the
+            // new feature can never make an existing download worse.
+            SegmentResult seg = DownloadSegments(
+                Downloads[param.index].url,
+                segment_options,
+                [&]() -> bool {
+                    lock_guard<mutex> g(lock_down_status);
+                    return Downloads[param.index].status == DOWNLOAD_CANCELLED;
+                },
+                [&](double frac) {
+                    lock_guard<mutex> g(lock_down_status);
+                    Downloads[param.index].segment_progress = frac;
+                },
+                [&](const string& msg) {
+                    cerr << "[" << param.index << "] " << msg << "\n";
+                });
+
+            lock_down_status.lock();
+            Downloads[param.index].segment_progress = -1.0;
+            Downloads[param.index].segment_parts = seg.parts;
+            Downloads[param.index].segment_threads = seg.threads;
+            Downloads[param.index].percentage.clear();
+            lock_down_status.unlock();
+
+            if (seg.cancelled) {
+                cerr << "[" << param.index << "] Parallel fetch cancelled\n";
+                if (!seg.temp_dir.empty())
+                    CleanupTempDir(seg.temp_dir);
+            } else {
+                if (seg.used_parallel) {
+                    cerr << "[" << param.index << "] Parallel fetch complete: "
+                         << seg.parts << " parts via " << seg.threads
+                         << " threads; remuxing local file\n";
+                    param.infile = seg.local_input;
+                } else if (!seg.error.empty()) {
+                    cerr << "[" << param.index << "] " << seg.error
+                         << "; using single-thread remux\n";
+                }
+                int32_t remux_rc = remux(param);
+                // Strictly additive safety net. If feeding the merged local
+                // file to ffmpeg failed (e.g. an extensionless fMP4 playlist
+                // we could not classify from the URI), retry once with the
+                // original URL -- exactly what the old single-threaded path
+                // did. A plain .ts merge normally just works; this branch only
+                // guards the rare case where it does not, so the new feature
+                // can never turn a previously-working download into a failure.
+                bool retry_single = false;
+                string original_url;
+                lock_down_status.lock();
+                {
+                    bool cancelled_now = Downloads[param.index].status == DOWNLOAD_CANCELLED;
+                    bool failed_now = Downloads[param.index].status == DOWNLOAD_FAILED;
+                    original_url = Downloads[param.index].url;
+                    retry_single = seg.used_parallel && !cancelled_now &&
+                                   (remux_rc != 0 || failed_now);
+                    if (retry_single) {
+                        Downloads[param.index].status = DOWNLOADING;
+                        Downloads[param.index].err_msg.clear();
+                        Downloads[param.index].percentage.clear();
+                        Downloads[param.index].segment_progress = -1.0;
+                        Downloads[param.index].segment_parts = 0;
+                        Downloads[param.index].segment_threads = 0;
+                    }
+                }
+                lock_down_status.unlock();
+                if (retry_single) {
+                    cerr << "[" << param.index << "] Local remux failed; "
+                         << "retrying with the original URL\n";
+                    param.infile = original_url;
+                    remux(param);
+                }
+                if (!seg.temp_dir.empty())
+                    CleanupTempDir(seg.temp_dir);
+            }
             lock_down_status.lock();
         }
         if (Downloads[param.index].status != DOWNLOAD_SUCCEEDED &&
@@ -777,6 +860,10 @@ int main(int argc, char** argv)
     app.add_flag("--short-char", short_char, "Prefix is given as short char instead of wide char");
     app.add_flag("--no-admin", no_admin, "Do not ask for Administrator's privilege");
     app.add_flag("--no-browser", no_browser, "Do not automatically open a browser");
+    app.add_option("--threads", segment_options.threads, "Parallel segment connections per video (default 8)");
+    app.add_option("--tries", segment_options.tries, "Network retries per segment (default 5)");
+    app.add_option("--split", segment_options.range_splits, "Range splits for a single file (default 4)");
+    app.add_option("--min-split-size", segment_options.range_min_split_size, "Min file size in bytes for Range splitting (default 4194304)");
     CLI11_PARSE(app, argc, argv);
 
     if ((!IsProcessRunAsAdmin()) && (!no_admin))
@@ -797,6 +884,14 @@ int main(int argc, char** argv)
             Params.append(" --short-char");
         if (no_browser)
             Params.append(" --no-browser");
+        Params.append(" --threads ");
+        Params.append(to_string(segment_options.threads));
+        Params.append(" --tries ");
+        Params.append(to_string(segment_options.tries));
+        Params.append(" --split ");
+        Params.append(to_string(segment_options.range_splits));
+        Params.append(" --min-split-size ");
+        Params.append(to_string(segment_options.range_min_split_size));
         HINSTANCE res = ShellExecuteA(NULL, "runas", szPath, Params.data(), NULL, SW_SHOW);
         if ((uint64_t)res > 32)
         {
@@ -1030,6 +1125,16 @@ int main(int argc, char** argv)
                 ret_json[i]["percent"] = 100.0;
                 ret_json[i]["msg"] = "";
             }
+            else if (Downloads[i].status == DOWNLOADING && Downloads[i].segment_progress >= 0.0)
+            {
+                // Parallel fetching is the first half of the job; the ffmpeg
+                // remux that follows supplies the second half. Splitting the
+                // bar 0-50 / 50-100 avoids an apparent jump back to zero.
+                double p = Downloads[i].segment_progress * 50.0;
+                if (p > 50.0) p = 50.0;
+                ret_json[i]["percent"] = p < 0.0 ? 0.0 : p;
+                ret_json[i]["msg"] = "Parallel segment download in progress";
+            }
             else
             {
                 double percentage = 0;
@@ -1037,6 +1142,10 @@ int main(int argc, char** argv)
                     percentage += Downloads[i].percentage[j];
                 if (Downloads[i].percentage.size())
                     percentage /= Downloads[i].percentage.size();
+                // If this download used the parallel pre-fetch, remux occupies
+                // the upper half of the progress bar.
+                if (Downloads[i].segment_parts > 0 && Downloads[i].status == DOWNLOADING)
+                    percentage = 50.0 + 0.5 * percentage;
                 ret_json[i]["percent"] = percentage < 0 ? 0.0 : (percentage >= 100 ? 99.99 : percentage);
                 if (Downloads[i].status != DOWNLOADING)
                     ret_json[i]["msg"] = Downloads[i].err_msg;

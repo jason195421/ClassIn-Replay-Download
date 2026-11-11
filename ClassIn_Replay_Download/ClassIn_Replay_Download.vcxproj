@@ -133,12 +133,14 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="ClassIn_Replay_Download.cpp" />
+    <ClCompile Include="segment_downloader.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="CLI11.hpp" />
     <ClInclude Include="httplib.h" />
     <ClInclude Include="json.hpp" />
     <ClInclude Include="resource.h" />
+    <ClInclude Include="segment_downloader.h" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="ClassIn_Replay_Download.rc" />
